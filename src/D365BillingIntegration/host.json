@@ -1,0 +1,49 @@
+{
+    "version": "2.0",
+    "logging": {
+      "applicationInsights": {
+        "samplingSettings": {
+          "isEnabled": true,
+          "excludedTypes": "Request",
+          "maxTelemetryItemsPerSecond": 20
+        },
+        "enableLiveMetrics": true,
+        "enableDependencyTracking": true,
+        "enablePerformanceCountersCollection": true
+      },
+      "logLevel": {
+        "default": "Information",
+        "Host.Results": "Error",
+        "Function": "Information",
+        "Host.Aggregator": "Trace",
+        "D365BillingIntegration": "Information"
+      }
+    },
+    "functionTimeout": "00:10:00",
+    "extensions": {
+      "serviceBus": {
+        "prefetchCount": 100,
+        "messageHandlerOptions": {
+          "autoComplete": true,
+          "maxConcurrentCalls": 16,
+          "maxAutoRenewDuration": "00:05:00"
+        },
+        "sessionHandlerOptions": {
+          "autoComplete": false,
+          "messageWaitTimeout": "00:00:30",
+          "maxAutoRenewDuration": "00:55:00",
+          "maxConcurrentSessions": 16
+        }
+      },
+      "http": {
+        "routePrefix": "api",
+        "maxOutstandingRequests": 200,
+        "maxConcurrentRequests": 100,
+        "dynamicThrottlesEnabled": true
+      }
+    },
+    "extensionBundle": {
+      "id": "Microsoft.Azure.Functions.ExtensionBundle",
+      "version": "[2.*, 3.0.0)"
+    }
+  }

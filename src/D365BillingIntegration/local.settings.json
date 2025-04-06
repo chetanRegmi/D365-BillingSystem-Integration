@@ -1,0 +1,26 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "dotnet",
+    
+    "ServiceBusConnection": "Endpoint=sb://your-namespace.servicebus.windows.net/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=your-key",
+    "CustomerEventsQueue": "customer-events",
+    "CustomerSyncSubscription": "customer-sync",
+    
+    "BILLING_SYSTEM_ASSEMBLY_PATH": "C:\\Path\\To\\BillingSystem.API.dll",
+    "BILLING_SYSTEM_CONFIG": "{\"apiUrl\":\"https://billing-system-api.example.com\",\"apiKey\":\"your-api-key\",\"connectionTimeout\":30}",
+    
+    "D365_API_URL": "https://your-d365-instance.operations.dynamics.com",
+    "D365_TENANT_ID": "your-tenant-id",
+    "D365_CLIENT_ID": "your-client-id",
+    "D365_CLIENT_SECRET": "your-client-secret",
+    
+    "APPINSIGHTS_INSTRUMENTATIONKEY": "your-instrumentation-key",
+    "DetailedLogging": true,
+    "MaxRetryAttempts": 3,
+    
+    "InvoiceSyncSchedule": "0 0 2 * * *",
+    "DefaultInvoiceLookbackDays": 1
+  }
+}
