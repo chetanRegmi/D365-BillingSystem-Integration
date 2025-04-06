@@ -1,248 +1,385 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Security;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using Newtonsoft.Json;
 
-namespace D365BillingIntegration.Shared.Logging
+namespace D365BillingIntegration.Shared.Configuration
 {
     /// <summary>
-    /// Extension methods for ILogger that provide structured logging
-    /// with consistent formats for the D365-BillingSystem integration.
+    /// Manages configuration settings for the D365-BillingSystem integration.
+    /// Handles loading configuration from environment variables, Azure Key Vault, 
+    /// or configuration files with appropriate security measures.
     /// </summary>
-    public static class LoggingExtensions
+    public class IntegrationSettings
     {
-        #region Customer Integration Logging
+        private readonly ILogger _logger;
+        private readonly Dictionary<string, string> _settings;
+        
+        // Required settings that must be available for the integration to work
+        private static readonly string[] _requiredSettings = new[]
+        {
+            "ServiceBusConnection",
+            "BILLING_SYSTEM_ASSEMBLY_PATH",
+            "BILLING_SYSTEM_CONFIG",
+            "D365_API_URL",
+            "D365_TENANT_ID",
+            "D365_CLIENT_ID",
+            "D365_CLIENT_SECRET"
+        };
 
         /// <summary>
-        /// Logs the start of customer synchronization
+        /// Initialize settings from environment variables
         /// </summary>
-        /// <param name="logger">The logger instance</param>
-        /// <param name="customerAccount">The customer account ID</param>
-        /// <param name="eventId">Optional business event ID</param>
-        public static void LogCustomerSyncStart(this ILogger logger, string customerAccount, string eventId = null)
+        /// <param name="logger">Logger instance for diagnostics</param>
+        public IntegrationSettings(ILogger logger)
         {
-            logger.LogInformation(
-                "Starting customer synchronization for customer {CustomerAccount}. Event ID: {EventId}",
-                customerAccount,
-                eventId ?? "Manual Trigger");
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _settings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            
+            LoadFromEnvironment();
         }
 
         /// <summary>
-        /// Logs the successful completion of customer synchronization
+        /// Initialize settings from a provided configuration source
         /// </summary>
-        /// <param name="logger">The logger instance</param>
-        /// <param name="customerAccount">The customer account ID</param>
-        /// <param name="durationMs">Duration of the operation in milliseconds</param>
-        public static void LogCustomerSyncSuccess(this ILogger logger, string customerAccount, long durationMs)
+        /// <param name="configuration">IConfiguration instance</param>
+        /// <param name="logger">Logger instance for diagnostics</param>
+        public IntegrationSettings(IConfiguration configuration, ILogger logger)
         {
-            logger.LogInformation(
-                "Successfully synchronized customer {CustomerAccount}. Operation took {DurationMs}ms",
-                customerAccount,
-                durationMs);
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            
+            if (configuration == null)
+                throw new ArgumentNullException(nameof(configuration));
+                
+            _settings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            
+            LoadFromConfiguration(configuration);
         }
 
+        #region Customer Integration Settings
+
         /// <summary>
-        /// Logs a failed customer synchronization operation
+        /// Azure Service Bus connection string
         /// </summary>
-        /// <param name="logger">The logger instance</param>
-        /// <param name="customerAccount">The customer account ID</param>
-        /// <param name="ex">The exception that caused the failure</param>
-        public static void LogCustomerSyncFailure(this ILogger logger, string customerAccount, Exception ex)
-        {
-            logger.LogError(
-                ex,
-                "Failed to synchronize customer {CustomerAccount}. Error: {ErrorMessage}",
-                customerAccount,
-                ex.Message);
-        }
+        public string ServiceBusConnection => GetSetting("ServiceBusConnection");
+        
+        /// <summary>
+        /// Service bus queue name for customer events
+        /// </summary>
+        public string CustomerEventsQueue => GetSetting("CustomerEventsQueue", "customer-events");
+        
+        /// <summary>
+        /// Service bus subscription name for customer sync
+        /// </summary>
+        public string CustomerSyncSubscription => GetSetting("CustomerSyncSubscription", "customer-sync");
 
         #endregion
 
-        #region Invoice Integration Logging
+        #region Invoice Integration Settings
 
         /// <summary>
-        /// Logs the start of invoice batch processing
+        /// CRON expression for the invoice sync timer trigger
         /// </summary>
-        /// <param name="logger">The logger instance</param>
-        /// <param name="startDate">Start date of the invoice range</param>
-        /// <param name="endDate">End date of the invoice range</param>
-        public static void LogInvoiceBatchStart(this ILogger logger, DateTime startDate, DateTime endDate)
-        {
-            logger.LogInformation(
-                "Starting invoice batch processing for date range {StartDate:yyyy-MM-dd} to {EndDate:yyyy-MM-dd}",
-                startDate,
-                endDate);
-        }
-
+        public string InvoiceSyncSchedule => GetSetting("InvoiceSyncSchedule", "0 0 2 * * *"); // Default: 2 AM daily
+        
         /// <summary>
-        /// Logs the completion of invoice batch processing with statistics
+        /// Default number of days to look back for invoices if not specified
         /// </summary>
-        /// <param name="logger">The logger instance</param>
-        /// <param name="totalCount">Total number of invoices processed</param>
-        /// <param name="successCount">Number of successfully processed invoices</param>
-        /// <param name="failureCount">Number of failed invoices</param>
-        /// <param name="durationMs">Duration of the operation in milliseconds</param>
-        public static void LogInvoiceBatchComplete(
-            this ILogger logger, 
-            int totalCount, 
-            int successCount, 
-            int failureCount, 
-            long durationMs)
+        public int DefaultInvoiceLookbackDays
         {
-            logger.LogInformation(
-                "Invoice batch processing completed. Total: {TotalCount}, Success: {SuccessCount}, " +
-                "Failed: {FailureCount}. Operation took {DurationMs}ms",
-                totalCount,
-                successCount,
-                failureCount,
-                durationMs);
-        }
-
-        /// <summary>
-        /// Logs individual invoice processing
-        /// </summary>
-        /// <param name="logger">The logger instance</param>
-        /// <param name="invoiceNumber">The billing system invoice number</param>
-        /// <param name="customerAccount">The customer account ID</param>
-        public static void LogInvoiceProcessing(this ILogger logger, string invoiceNumber, string customerAccount)
-        {
-            logger.LogInformation(
-                "Processing invoice {InvoiceNumber} for customer {CustomerAccount}",
-                invoiceNumber,
-                customerAccount);
-        }
-
-        /// <summary>
-        /// Logs successful invoice creation in D365
-        /// </summary>
-        /// <param name="logger">The logger instance</param>
-        /// <param name="billingInvoiceNumber">The billing system invoice number</param>
-        /// <param name="d365InvoiceNumber">The D365 invoice number</param>
-        public static void LogInvoiceCreationSuccess(
-            this ILogger logger, 
-            string billingInvoiceNumber, 
-            string d365InvoiceNumber)
-        {
-            logger.LogInformation(
-                "Successfully created invoice {BillingInvoiceNumber} in D365 with number {D365InvoiceNumber}",
-                billingInvoiceNumber,
-                d365InvoiceNumber);
-        }
-
-        /// <summary>
-        /// Logs failed invoice creation
-        /// </summary>
-        /// <param name="logger">The logger instance</param>
-        /// <param name="invoiceNumber">The billing system invoice number</param>
-        /// <param name="ex">The exception that caused the failure</param>
-        public static void LogInvoiceCreationFailure(this ILogger logger, string invoiceNumber, Exception ex)
-        {
-            logger.LogError(
-                ex,
-                "Failed to create invoice {InvoiceNumber} in D365. Error: {ErrorMessage}",
-                invoiceNumber,
-                ex.Message);
-        }
-
-        #endregion
-
-        #region Integration System Logging
-
-        /// <summary>
-        /// Logs assembly loading operations
-        /// </summary>
-        /// <param name="logger">The logger instance</param>
-        /// <param name="assemblyPath">Path to the assembly being loaded</param>
-        public static void LogAssemblyLoading(this ILogger logger, string assemblyPath)
-        {
-            logger.LogInformation(
-                "Loading assembly from {AssemblyPath}",
-                assemblyPath);
-        }
-
-        /// <summary>
-        /// Logs D365 API operations
-        /// </summary>
-        /// <param name="logger">The logger instance</param>
-        /// <param name="operation">Name of the operation</param>
-        /// <param name="endpoint">API endpoint</param>
-        public static void LogD365ApiOperation(this ILogger logger, string operation, string endpoint)
-        {
-            logger.LogInformation(
-                "D365 API {Operation} to {Endpoint}",
-                operation,
-                endpoint);
-        }
-
-        /// <summary>
-        /// Logs authentication operations
-        /// </summary>
-        /// <param name="logger">The logger instance</param>
-        /// <param name="system">The system being authenticated with</param>
-        /// <param name="clientId">The client ID used (partially masked)</param>
-        public static void LogAuthentication(this ILogger logger, string system, string clientId)
-        {
-            // Mask client ID for security
-            string maskedClientId = clientId;
-            if (clientId?.Length > 8)
+            get
             {
-                maskedClientId = clientId.Substring(0, 4) + "****" + clientId.Substring(clientId.Length - 4);
+                if (int.TryParse(GetSetting("DefaultInvoiceLookbackDays", "1"), out int days))
+                    return days;
+                return 1;
             }
-
-            logger.LogInformation(
-                "Authenticating with {System} using client ID {ClientId}",
-                system,
-                maskedClientId);
         }
 
+        #endregion
+
+        #region Billing System Settings
+
         /// <summary>
-        /// Logs integration configuration
+        /// Path to the billing system assembly (.dll)
         /// </summary>
-        /// <param name="logger">The logger instance</param>
-        /// <param name="configName">Configuration property name</param>
-        /// <param name="configValue">Configuration value (sensitive data should be masked before calling)</param>
-        public static void LogConfiguration(this ILogger logger, string configName, string configValue)
+        public string BillingSystemAssemblyPath => GetSetting("BILLING_SYSTEM_ASSEMBLY_PATH");
+        
+        /// <summary>
+        /// Billing system configuration (JSON format)
+        /// </summary>
+        public string BillingSystemConfig => GetSetting("BILLING_SYSTEM_CONFIG");
+        
+        /// <summary>
+        /// Gets the billing system configuration as a typed object
+        /// </summary>
+        /// <typeparam name="T">The type to deserialize to</typeparam>
+        /// <returns>Configuration object</returns>
+        public T GetBillingSystemConfig<T>() where T : class, new()
         {
-            logger.LogInformation(
-                "Configuration: {ConfigName} = {ConfigValue}",
-                configName,
-                configValue);
+            try
+            {
+                string config = BillingSystemConfig;
+                if (string.IsNullOrWhiteSpace(config))
+                    return new T();
+                    
+                return JsonConvert.DeserializeObject<T>(config) ?? new T();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error deserializing billing system configuration: {ErrorMessage}", ex.Message);
+                return new T();
+            }
         }
 
-        /// <summary>
-        /// Logs integration metrics for monitoring
-        /// </summary>
-        /// <param name="logger">The logger instance</param>
-        /// <param name="operation">The operation being measured</param>
-        /// <param name="durationMs">Duration in milliseconds</param>
-        /// <param name="additionalData">Any additional metric data</param>
-        public static void LogPerformanceMetric(
-            this ILogger logger, 
-            string operation, 
-            long durationMs, 
-            Dictionary<string, object> additionalData = null)
-        {
-            // Create a loggable object that combines all metrics
-            var metrics = new Dictionary<string, object>
-            {
-                ["Operation"] = operation,
-                ["DurationMs"] = durationMs
-            };
+        #endregion
 
-            // Add any additional metrics
-            if (additionalData != null)
+        #region D365 Settings
+
+        /// <summary>
+        /// D365 F&O API URL
+        /// </summary>
+        public string D365ApiUrl => GetSetting("D365_API_URL");
+        
+        /// <summary>
+        /// Azure AD tenant ID for D365 authentication
+        /// </summary>
+        public string D365TenantId => GetSetting("D365_TENANT_ID");
+        
+        /// <summary>
+        /// Client ID for D365 authentication
+        /// </summary>
+        public string D365ClientId => GetSetting("D365_CLIENT_ID");
+        
+        /// <summary>
+        /// Client secret for D365 authentication
+        /// </summary>
+        public SecureString D365ClientSecret
+        {
+            get
             {
-                foreach (var kvp in additionalData)
+                string secret = GetSetting("D365_CLIENT_SECRET");
+                if (string.IsNullOrEmpty(secret))
+                    return new SecureString();
+                    
+                var secureSecret = new SecureString();
+                foreach (char c in secret)
                 {
-                    metrics[kvp.Key] = kvp.Value;
+                    secureSecret.AppendChar(c);
+                }
+                secureSecret.MakeReadOnly();
+                return secureSecret;
+            }
+        }
+
+        #endregion
+
+        #region Application Settings
+
+        /// <summary>
+        /// Application Insights instrumentation key for telemetry
+        /// </summary>
+        public string InstrumentationKey => GetSetting("APPINSIGHTS_INSTRUMENTATIONKEY");
+        
+        /// <summary>
+        /// Enable detailed logging
+        /// </summary>
+        public bool DetailedLogging
+        {
+            get
+            {
+                if (bool.TryParse(GetSetting("DetailedLogging", "false"), out bool result))
+                    return result;
+                return false;
+            }
+        }
+        
+        /// <summary>
+        /// Maximum retry attempts for operations
+        /// </summary>
+        public int MaxRetryAttempts
+        {
+            get
+            {
+                if (int.TryParse(GetSetting("MaxRetryAttempts", "3"), out int attempts))
+                    return attempts;
+                return 3;
+            }
+        }
+
+        #endregion
+
+        #region Configuration Loading
+
+        /// <summary>
+        /// Load settings from environment variables
+        /// </summary>
+        private void LoadFromEnvironment()
+        {
+            _logger.LogInformation("Loading settings from environment variables");
+            
+            foreach (var variable in Environment.GetEnvironmentVariables().Keys)
+            {
+                string key = variable.ToString();
+                _settings[key] = Environment.GetEnvironmentVariable(key);
+            }
+            
+            ValidateRequiredSettings();
+        }
+        
+        /// <summary>
+        /// Load settings from IConfiguration source
+        /// </summary>
+        private void LoadFromConfiguration(IConfiguration configuration)
+        {
+            _logger.LogInformation("Loading settings from configuration");
+            
+            foreach (var setting in configuration.AsEnumerable())
+            {
+                if (!string.IsNullOrEmpty(setting.Key))
+                {
+                    _settings[setting.Key] = setting.Value;
                 }
             }
-
-            logger.LogInformation(
-                "Performance: {Operation} completed in {DurationMs}ms", 
-                operation, 
-                durationMs);
+            
+            ValidateRequiredSettings();
+        }
+        
+        /// <summary>
+        /// Load settings from a JSON file
+        /// </summary>
+        /// <param name="filePath">Path to the JSON configuration file</param>
+        public void LoadFromJsonFile(string filePath)
+        {
+            if (string.IsNullOrWhiteSpace(filePath))
+                throw new ArgumentException("File path cannot be null or empty", nameof(filePath));
+                
+            if (!File.Exists(filePath))
+                throw new FileNotFoundException($"Configuration file not found: {filePath}");
+                
+            _logger.LogInformation("Loading settings from JSON file: {FilePath}", filePath);
+            
+            try
+            {
+                string json = File.ReadAllText(filePath);
+                var jsonSettings = JsonConvert.DeserializeObject<Dictionary<string, string>>(json);
+                
+                if (jsonSettings != null)
+                {
+                    foreach (var kvp in jsonSettings)
+                    {
+                        _settings[kvp.Key] = kvp.Value;
+                    }
+                }
+                
+                ValidateRequiredSettings();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error loading settings from JSON file: {ErrorMessage}", ex.Message);
+                throw;
+            }
+        }
+        
+        /// <summary>
+        /// Validates that all required settings are available
+        /// </summary>
+        private void ValidateRequiredSettings()
+        {
+            var missingSettings = _requiredSettings
+                .Where(key => string.IsNullOrEmpty(GetSetting(key)))
+                .ToList();
+                
+            if (missingSettings.Any())
+            {
+                string missingSetting = string.Join(", ", missingSettings);
+                _logger.LogError("Missing required settings: {MissingSettings}", missingSetting);
+                throw new ConfigurationException($"Missing required settings: {missingSetting}");
+            }
+            
+            _logger.LogInformation("All required settings validated successfully");
         }
 
         #endregion
+
+        #region Helper Methods
+
+        /// <summary>
+        /// Get a setting by key with an optional default value
+        /// </summary>
+        /// <param name="key">Setting key</param>
+        /// <param name="defaultValue">Optional default value</param>
+        /// <returns>Setting value or default</returns>
+        public string GetSetting(string key, string defaultValue = null)
+        {
+            if (string.IsNullOrEmpty(key))
+                throw new ArgumentException("Setting key cannot be null or empty", nameof(key));
+                
+            return _settings.TryGetValue(key, out string value) && !string.IsNullOrEmpty(value)
+                ? value
+                : defaultValue;
+        }
+        
+        /// <summary>
+        /// Updates a setting value
+        /// </summary>
+        /// <param name="key">Setting key</param>
+        /// <param name="value">New value</param>
+        public void UpdateSetting(string key, string value)
+        {
+            if (string.IsNullOrEmpty(key))
+                throw new ArgumentException("Setting key cannot be null or empty", nameof(key));
+                
+            _settings[key] = value;
+            _logger.LogInformation("Updated setting: {SettingKey}", key);
+        }
+        
+        /// <summary>
+        /// Gets all settings (excluding secrets)
+        /// </summary>
+        /// <returns>Dictionary of non-secret settings</returns>
+        public Dictionary<string, string> GetAllSettings()
+        {
+            // Create a new dictionary with all settings except secrets
+            var nonSecretSettings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            
+            // List of keys that should not be exposed (contains secrets)
+            var secretKeys = new[] { 
+                "D365_CLIENT_SECRET", 
+                "BILLING_SYSTEM_CONFIG",
+                "ServiceBusConnection"
+            };
+            
+            foreach (var kvp in _settings)
+            {
+                if (!secretKeys.Any(s => kvp.Key.Contains(s, StringComparison.OrdinalIgnoreCase)))
+                {
+                    nonSecretSettings[kvp.Key] = kvp.Value;
+                }
+                else
+                {
+                    // For secret keys, indicate they exist but don't show value
+                    nonSecretSettings[kvp.Key] = "[SECRET]";
+                }
+            }
+            
+            return nonSecretSettings;
+        }
+
+        #endregion
+    }
+    
+    /// <summary>
+    /// Exception thrown when configuration validation fails
+    /// </summary>
+    public class ConfigurationException : Exception
+    {
+        public ConfigurationException(string message) : base(message) { }
+        
+        public ConfigurationException(string message, Exception innerException) 
+            : base(message, innerException) { }
     }
 }
